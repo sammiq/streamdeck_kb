@@ -66,24 +66,29 @@ enum StatusMode {
 #[derive(Debug)]
 enum StatusIcons {
     String(BTreeMap<String, PathBuf>),
-    Integer(BTreeMap<i64, PathBuf>),
+    Integer {
+        exact: BTreeMap<String, PathBuf>,
+        thresholds: BTreeMap<i64, PathBuf>,
+    },
 }
 
 impl StatusIcons {
     fn is_empty(&self) -> bool {
         match self {
             Self::String(icons) => icons.is_empty(),
-            Self::Integer(icons) => icons.is_empty(),
+            Self::Integer { exact, thresholds } => exact.is_empty() && thresholds.is_empty(),
         }
     }
 
     fn icon_for(&self, status: &str) -> Option<&PathBuf> {
         match self {
             Self::String(icons) => icons.get(status),
-            Self::Integer(icons) => status
-                .parse::<i64>()
-                .ok()
-                .and_then(|value| icons.range(..=value).next_back().map(|(_, icon)| icon)),
+            Self::Integer { exact, thresholds } => exact.get(status).or_else(|| {
+                status
+                    .parse::<i64>()
+                    .ok()
+                    .and_then(|value| thresholds.range(..=value).next_back().map(|(_, icon)| icon))
+            }),
         }
     }
 }
@@ -106,17 +111,18 @@ impl<'de> Deserialize<'de> for Status {
         let raw = RawStatus::deserialize(deserializer)?;
         let icons = match raw.mode {
             StatusMode::String => StatusIcons::String(raw.icons),
-            StatusMode::Integer => StatusIcons::Integer(
-                raw.icons
-                    .into_iter()
-                    .map(|(threshold, icon)| {
-                        threshold
-                            .parse::<i64>()
-                            .map(|threshold| (threshold, icon))
-                            .map_err(serde::de::Error::custom)
-                    })
-                    .collect::<std::result::Result<_, _>>()?,
-            ),
+            StatusMode::Integer => {
+                let mut exact = BTreeMap::new();
+                let mut thresholds = BTreeMap::new();
+                for (key, icon) in raw.icons {
+                    if let Ok(threshold) = key.parse::<i64>() {
+                        thresholds.insert(threshold, icon);
+                    } else {
+                        exact.insert(key, icon);
+                    }
+                }
+                StatusIcons::Integer { exact, thresholds }
+            }
         };
         Ok(Self {
             command: raw.command,
@@ -730,18 +736,25 @@ mod tests {
     }
 
     #[test]
-    fn integer_status_rejects_non_integer_thresholds_while_loading() {
-        assert!(
-            toml::from_str::<Status>(
-                r#"
+    fn integer_status_supports_exact_overrides() {
+        let status: Status = toml::from_str(
+            r#"
                 command = "echo 0"
                 mode = "integer"
 
                 [icons]
-                low = "icons/low.png"
+                MUTED = "icons/muted.png"
+                1000 = "icons/low.png"
             "#,
-            )
-            .is_err()
+        )
+        .unwrap();
+        assert_eq!(
+            status.icons.icon_for("MUTED"),
+            Some(&PathBuf::from("icons/muted.png"))
+        );
+        assert_eq!(
+            status.icons.icon_for("1000"),
+            Some(&PathBuf::from("icons/low.png"))
         );
     }
 

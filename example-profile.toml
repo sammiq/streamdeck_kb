@@ -51,16 +51,17 @@ poll_seconds = 1
 
 [[buttons]]
 index = 4
-# Increase the default output volume by 5% when pressed.
-command = "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+"
+# Toggle mute on the default output volume when pressed.
+command = "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle"
 icon = "icons/volume-0000.png"
 
 [buttons.status]
-command = "wpctl get-volume @DEFAULT_AUDIO_SINK@ | awk '{ printf \"%.0f\\n\", $2 * 10000 }'"
+command = "wpctl get-volume @DEFAULT_AUDIO_SINK@ | awk '/\\[MUTED\\]/{ print \"MUTED\"; next } { printf \"%.0f\\n\", $2 * 10000 }'"
 mode = "integer"
 poll_seconds = 1
 
 [buttons.status.icons]
+MUTED = "icons/volume-muted.png"
 1000 = "icons/volume-1000.png"
 2000 = "icons/volume-2000.png"
 3000 = "icons/volume-3000.png"

@@ -72,14 +72,18 @@ mode = "integer"
 Without `mode`, status matching stays in the default `string` mode and matches
 the complete trimmed output exactly.
 
+Integer mode also supports exact string overrides in the same table; exact
+matches win before numeric thresholds, so `MUTED = "icons/volume-muted.png"`
+can sit alongside `1000 = "icons/volume-1000.png"`.
+
 The example profile includes a KDE brightness gauge. It queries
 `qdbus-qt6 org.kde.Solid.PowerManagement /org/kde/Solid/PowerManagement/Actions/BrightnessControl brightness`
 and maps its `0`–`10000` result to gauges at every `1000` increment. Its action
 is `true`, so pressing the button is a harmless no-op.
 
-The example also includes a PipeWire volume test button. It raises the default
-audio sink by 5% and uses `wpctl get-volume` plus `awk` to map its fractional
-volume into the same `0`–`10000` gauge range.
+The example also includes a PipeWire volume test button. It toggles mute on the
+default audio sink and uses `wpctl get-volume` plus `awk` to map its fractional
+volume into the same `0`–`10000` gauge range, or emit the `MUTED` override.
 
 ## Key bindings
 
