@@ -1,0 +1,50 @@
+# Button numbers are zero-based and follow the index reported by the device.
+# Each command is run with /bin/sh -c when its button is pressed.
+
+[[buttons]]
+index = 0
+command = "notify-send 'Stream Deck' 'Button 0 pressed'"
+# Relative icon paths are resolved from this profile's directory.
+icon = "icons/notification.png"
+
+[[buttons]]
+index = 1
+command = "playerctl play-pause"
+# Used whenever the status command has no usable output.
+icon = "icons/play-pause.png"
+
+[buttons.status]
+command = "playerctl status"
+poll_seconds = 1
+
+[buttons.status.icons]
+Playing = "icons/playing.png"
+Paused = "icons/paused.png"
+
+[[buttons]]
+index = 2
+keys = ["CTRL", "ALT", "T"]
+icon = "icons/terminal.png"
+
+[[buttons]]
+index = 3
+# A no-op action; this button exists to show the brightness status gauge.
+command = "true"
+icon = "icons/brightness-0000.png"
+
+[buttons.status]
+command = "qdbus-qt6 org.kde.Solid.PowerManagement /org/kde/Solid/PowerManagement/Actions/BrightnessControl brightness"
+mode = "integer"
+poll_seconds = 1
+
+[buttons.status.icons]
+1000 = "icons/brightness-1000.png"
+2000 = "icons/brightness-2000.png"
+3000 = "icons/brightness-3000.png"
+4000 = "icons/brightness-4000.png"
+5000 = "icons/brightness-5000.png"
+6000 = "icons/brightness-6000.png"
+7000 = "icons/brightness-7000.png"
+8000 = "icons/brightness-8000.png"
+9000 = "icons/brightness-9000.png"
+10000 = "icons/brightness-10000.png"
