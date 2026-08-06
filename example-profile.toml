@@ -72,3 +72,19 @@ MUTED = "icons/volume-muted.png"
 8000 = "icons/volume-8000.png"
 9000 = "icons/volume-9000.png"
 10000 = "icons/volume-10000.png"
+
+[[buttons]]
+index = 5
+# A no-op action; this button exists to show the current HVAC mode.
+command = "true"
+icon = "icons/climate-off.png"
+
+[buttons.status]
+command = "ha-query.sh climate.daikinap19971 | jq '.state'"
+poll_seconds = 5
+
+[buttons.status.icons]
+# `jq '.state'` emits JSON strings, including the surrounding quotes.
+'"heat"' = "icons/climate-heat.png"
+'"cool"' = "icons/climate-cool.png"
+'"off"' = "icons/climate-off.png"
