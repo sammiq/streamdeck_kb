@@ -48,3 +48,26 @@ poll_seconds = 1
 8000 = "icons/brightness-8000.png"
 9000 = "icons/brightness-9000.png"
 10000 = "icons/brightness-10000.png"
+
+[[buttons]]
+index = 4
+# Increase the default output volume by 5% when pressed.
+command = "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+"
+icon = "icons/volume-0000.png"
+
+[buttons.status]
+command = "wpctl get-volume @DEFAULT_AUDIO_SINK@ | awk '{ printf \"%.0f\\n\", $2 * 10000 }'"
+mode = "integer"
+poll_seconds = 1
+
+[buttons.status.icons]
+1000 = "icons/volume-1000.png"
+2000 = "icons/volume-2000.png"
+3000 = "icons/volume-3000.png"
+4000 = "icons/volume-4000.png"
+5000 = "icons/volume-5000.png"
+6000 = "icons/volume-6000.png"
+7000 = "icons/volume-7000.png"
+8000 = "icons/volume-8000.png"
+9000 = "icons/volume-9000.png"
+10000 = "icons/volume-10000.png"

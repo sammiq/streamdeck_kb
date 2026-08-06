@@ -77,6 +77,10 @@ The example profile includes a KDE brightness gauge. It queries
 and maps its `0`–`10000` result to gauges at every `1000` increment. Its action
 is `true`, so pressing the button is a harmless no-op.
 
+The example also includes a PipeWire volume test button. It raises the default
+audio sink by 5% and uses `wpctl get-volume` plus `awk` to map its fractional
+volume into the same `0`–`10000` gauge range.
+
 ## Key bindings
 
 `keys` sends a key chord through a Linux `/dev/uinput` virtual keyboard, which
