@@ -34,7 +34,7 @@ icon = "icons/brightness-0000.png"
 
 [buttons.status]
 command = "qdbus-qt6 org.kde.Solid.PowerManagement /org/kde/Solid/PowerManagement/Actions/BrightnessControl brightness"
-mode = "integer"
+mode = "threshold"
 poll_seconds = 1
 
 [buttons.status.icons]
@@ -57,7 +57,7 @@ icon = "icons/volume-0000.png"
 
 [buttons.status]
 command = "wpctl get-volume @DEFAULT_AUDIO_SINK@ | awk '/\\[MUTED\\]/{ print \"MUTED\"; next } { printf \"%.0f\\n\", $2 * 10000 }'"
-mode = "integer"
+mode = "threshold"
 poll_seconds = 1
 
 [buttons.status.icons]

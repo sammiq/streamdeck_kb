@@ -55,14 +55,14 @@ Status buttons must also define a base `icon`. It is restored whenever the
 status command fails, or produces output that has no icon mapping. Only a
 successful command's trimmed standard output is used to select the status icon.
 
-Set `mode = "integer"` to treat the output as an integer and choose the icon at
+Set `mode = "threshold"` to treat the output as an integer and choose the icon at
 the highest threshold less than or equal to it. The base icon is used below the
 lowest threshold or when the output is not an integer:
 
 ```toml
 [buttons.status]
 command = "some-command-that-prints-a-number"
-mode = "integer"
+mode = "threshold"
 
 [buttons.status.icons]
 3000 = "icons/three-thousand.png"
@@ -72,7 +72,7 @@ mode = "integer"
 Without `mode`, status matching stays in the default `string` mode and matches
 the complete trimmed output exactly.
 
-Integer mode also supports exact string overrides in the same table; exact
+Threshold mode also supports exact string overrides in the same table; exact
 matches win before numeric thresholds, so `MUTED = "icons/volume-muted.png"`
 can sit alongside `1000 = "icons/volume-1000.png"`.
 

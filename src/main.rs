@@ -60,13 +60,13 @@ struct Status {
 enum StatusMode {
     #[default]
     String,
-    Integer,
+    Threshold,
 }
 
 #[derive(Debug)]
 enum StatusIcons {
     String(BTreeMap<String, PathBuf>),
-    Integer {
+    Threshold {
         exact: BTreeMap<String, PathBuf>,
         thresholds: BTreeMap<i64, PathBuf>,
     },
@@ -76,14 +76,14 @@ impl StatusIcons {
     fn is_empty(&self) -> bool {
         match self {
             Self::String(icons) => icons.is_empty(),
-            Self::Integer { exact, thresholds } => exact.is_empty() && thresholds.is_empty(),
+            Self::Threshold { exact, thresholds } => exact.is_empty() && thresholds.is_empty(),
         }
     }
 
     fn icon_for(&self, status: &str) -> Option<&PathBuf> {
         match self {
             Self::String(icons) => icons.get(status),
-            Self::Integer { exact, thresholds } => exact.get(status).or_else(|| {
+            Self::Threshold { exact, thresholds } => exact.get(status).or_else(|| {
                 status
                     .parse::<i64>()
                     .ok()
@@ -111,7 +111,7 @@ impl<'de> Deserialize<'de> for Status {
         let raw = RawStatus::deserialize(deserializer)?;
         let icons = match raw.mode {
             StatusMode::String => StatusIcons::String(raw.icons),
-            StatusMode::Integer => {
+            StatusMode::Threshold => {
                 let mut exact = BTreeMap::new();
                 let mut thresholds = BTreeMap::new();
                 for (key, icon) in raw.icons {
@@ -121,7 +121,7 @@ impl<'de> Deserialize<'de> for Status {
                         exact.insert(key, icon);
                     }
                 }
-                StatusIcons::Integer { exact, thresholds }
+                StatusIcons::Threshold { exact, thresholds }
             }
         };
         Ok(Self {
@@ -706,11 +706,11 @@ mod tests {
     }
 
     #[test]
-    fn integer_status_selects_the_highest_matching_threshold() {
+    fn threshold_status_selects_the_highest_matching_threshold() {
         let status: Status = toml::from_str(
             r#"
                 command = "echo 0"
-                mode = "integer"
+                mode = "threshold"
 
                 [icons]
                 3000 = "icons/three-thousand.png"
@@ -736,11 +736,11 @@ mod tests {
     }
 
     #[test]
-    fn integer_status_supports_exact_overrides() {
+    fn threshold_status_supports_exact_overrides() {
         let status: Status = toml::from_str(
             r#"
                 command = "echo 0"
-                mode = "integer"
+                mode = "threshold"
 
                 [icons]
                 MUTED = "icons/muted.png"
