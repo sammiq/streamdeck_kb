@@ -75,8 +75,8 @@ MUTED = "icons/volume-muted.png"
 
 [[buttons]]
 index = 5
-# A no-op action; this button exists to show the current HVAC mode.
-command = "true"
+# Toggle the AC on and off when button pressed.
+command = "ha-command.sh climate.daikinap19971 climate/toggle"
 icon = "icons/climate-off.png"
 
 [buttons.status]
@@ -88,3 +88,104 @@ poll_seconds = 5
 '"heat"' = "icons/climate-heat.png"
 '"cool"' = "icons/climate-cool.png"
 '"off"' = "icons/climate-off.png"
+
+[[buttons]]
+index = 6
+# Show the Envoy's current solar-production reading when pressed.
+command = "ha-query.sh 'sensor.envoy_122328060082_current_power_production' | jq '.state'"
+icon = "icons/solar-over-1kw.png"
+
+[buttons.status]
+# Home Assistant reports the state as a floating-point kilowatt value.
+# Truncate it to a whole number for threshold matching.
+command = "ha-query.sh 'sensor.envoy_122328060082_current_power_production' | jq '.state | tonumber | floor'"
+mode = "threshold"
+poll_seconds = 5
+
+[buttons.status.icons]
+0 = "icons/solar-over-0kw.png"
+1 = "icons/solar-over-1kw.png"
+2 = "icons/solar-over-2kw.png"
+3 = "icons/solar-over-3kw.png"
+4 = "icons/solar-over-4kw.png"
+5 = "icons/solar-over-5kw.png"
+6 = "icons/solar-over-6kw.png"
+7 = "icons/solar-over-7kw.png"
+8 = "icons/solar-over-8kw.png"
+9 = "icons/solar-over-9kw.png"
+10 = "icons/solar-over-10kw.png"
+
+[[buttons]]
+index = 7
+# Show the current power being exported to the grid when pressed.
+command = "ha-query.sh 'sensor.current_grid_export' | jq '.state'"
+icon = "icons/grid-export-over-0kw.png"
+
+[buttons.status]
+# Truncate the floating-point kilowatt reading for threshold matching.
+command = "ha-query.sh 'sensor.current_grid_export' | jq '.state | tonumber | floor'"
+mode = "threshold"
+poll_seconds = 5
+
+[buttons.status.icons]
+0 = "icons/grid-export-over-0kw.png"
+1 = "icons/grid-export-over-1kw.png"
+2 = "icons/grid-export-over-2kw.png"
+3 = "icons/grid-export-over-3kw.png"
+4 = "icons/grid-export-over-4kw.png"
+5 = "icons/grid-export-over-5kw.png"
+6 = "icons/grid-export-over-6kw.png"
+7 = "icons/grid-export-over-7kw.png"
+8 = "icons/grid-export-over-8kw.png"
+9 = "icons/grid-export-over-9kw.png"
+10 = "icons/grid-export-over-10kw.png"
+
+[[buttons]]
+index = 8
+# Show the current power being imported from the grid when pressed.
+command = "ha-query.sh 'sensor.current_grid_import' | jq '.state'"
+icon = "icons/grid-import-over-0kw.png"
+
+[buttons.status]
+# Truncate the floating-point kilowatt reading for threshold matching.
+command = "ha-query.sh 'sensor.current_grid_import' | jq '.state | tonumber | floor'"
+mode = "threshold"
+poll_seconds = 5
+
+[buttons.status.icons]
+0 = "icons/grid-import-over-0kw.png"
+1 = "icons/grid-import-over-1kw.png"
+2 = "icons/grid-import-over-2kw.png"
+3 = "icons/grid-import-over-3kw.png"
+4 = "icons/grid-import-over-4kw.png"
+5 = "icons/grid-import-over-5kw.png"
+6 = "icons/grid-import-over-6kw.png"
+7 = "icons/grid-import-over-7kw.png"
+8 = "icons/grid-import-over-8kw.png"
+9 = "icons/grid-import-over-9kw.png"
+10 = "icons/grid-import-over-10kw.png"
+
+[[buttons]]
+index = 9
+# Show the current EV-charger power when pressed.
+command = "ha-query.sh 'sensor.myenergi_epping_power_charging' | jq '.state'"
+icon = "icons/ev-charging-over-0kw.png"
+
+[buttons.status]
+# Truncate the floating-point kilowatt reading for threshold matching.
+command = "ha-query.sh 'sensor.myenergi_epping_power_charging' | jq '.state | tonumber | floor'"
+mode = "threshold"
+poll_seconds = 5
+
+[buttons.status.icons]
+0 = "icons/ev-charging-over-0kw.png"
+1 = "icons/ev-charging-over-1kw.png"
+2 = "icons/ev-charging-over-2kw.png"
+3 = "icons/ev-charging-over-3kw.png"
+4 = "icons/ev-charging-over-4kw.png"
+5 = "icons/ev-charging-over-5kw.png"
+6 = "icons/ev-charging-over-6kw.png"
+7 = "icons/ev-charging-over-7kw.png"
+8 = "icons/ev-charging-over-8kw.png"
+9 = "icons/ev-charging-over-9kw.png"
+10 = "icons/ev-charging-over-10kw.png"
