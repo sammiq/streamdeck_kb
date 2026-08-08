@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeMap,
     env, fs,
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -16,18 +16,20 @@ use uinput::event::keyboard::Key;
 /// The part of a profile used by this first increment.
 ///
 /// Future versions can add key strokes and display settings without changing the
-/// existing `[[buttons]]` command mappings.
+/// existing button mappings.
 #[derive(Debug, Deserialize)]
 struct Profile {
     #[serde(default)]
-    buttons: Vec<Button>,
+    buttons: Vec<Option<Button>>,
 }
 
 #[derive(Debug, Deserialize)]
 struct Button {
-    index: u8,
     command: Option<String>,
     keys: Option<KeySequence>,
+    profile: Option<PathBuf>,
+    #[serde(default)]
+    back: bool,
     icon: Option<PathBuf>,
     status: Option<Status>,
 }
@@ -156,8 +158,12 @@ impl StatusState {
         let displayed_icons = profile
             .buttons
             .iter()
-            .filter(|button| button.status.is_some() && button.icon.is_some())
-            .map(|button| (button.index, DisplayedIcon::Base))
+            .enumerate()
+            .filter_map(|(index, button)| {
+                let button = button.as_ref()?;
+                (button.status.is_some() && button.icon.is_some())
+                    .then_some((index as u8, DisplayedIcon::Base))
+            })
             .collect();
         Self {
             next_polls: BTreeMap::new(),
@@ -170,14 +176,14 @@ impl Profile {
     fn load(path: &Path) -> Result<Self> {
         let contents = fs::read_to_string(path)
             .with_context(|| format!("could not read profile {}", path.display()))?;
-        toml::from_str(&contents)
-            .with_context(|| format!("could not parse profile {}", path.display()))
+        serde_yaml::from_str(&contents)
+            .with_context(|| format!("could not parse YAML profile {}", path.display()))
     }
 }
 
 fn main() -> Result<()> {
-    let profile_path = profile_path()?;
-    let profile = Profile::load(&profile_path)?;
+    let mut profile_path = profile_path()?;
+    let mut profile = Profile::load(&profile_path)?;
 
     let hid = new_hidapi()?;
     let devices = list_devices(&hid);
@@ -191,7 +197,7 @@ fn main() -> Result<()> {
 
     println!(
         "Loaded {} button binding(s) from {}. Connected to {kind} ({serial}).",
-        profile.buttons.len(),
+        profile.buttons.iter().flatten().count(),
         profile_path.display()
     );
 
@@ -199,30 +205,63 @@ fn main() -> Result<()> {
     let deck = Arc::new(
         StreamDeck::connect(&hid, kind, &serial).context("could not connect to Stream Deck")?,
     );
-    load_icons(&deck, &profile, &profile_path)?;
+    load_icons(&deck, &profile, &profile_path, false)?;
     let reader = deck.get_reader();
     let mut status_state = StatusState::with_base_icons(&profile);
     let mut keyboard = create_virtual_keyboard(&profile)?;
+    let mut profile_history = Vec::new();
 
     loop {
         update_statuses(&deck, &profile, &profile_path, &mut status_state);
 
         for update in reader.read(Some(Duration::from_millis(100)))? {
-            if let DeviceStateUpdate::ButtonDown(button) = update
-                && let Some(binding) = profile
-                    .buttons
-                    .iter()
-                    .find(|binding| binding.index == button)
-                && let Some(command) = &binding.command
-            {
+            let DeviceStateUpdate::ButtonDown(button) = update else {
+                continue;
+            };
+            let Some(binding) = profile
+                .buttons
+                .get(button as usize)
+                .and_then(Option::as_ref)
+            else {
+                continue;
+            };
+
+            if let Some(target) = &binding.profile {
+                match switch_profile(&deck, &profile_path, target, key_count, true) {
+                    Ok((new_profile_path, new_profile, new_status_state, new_keyboard)) => {
+                        profile_history.push(profile_path.clone());
+                        profile_path = new_profile_path;
+                        profile = new_profile;
+                        status_state = new_status_state;
+                        keyboard = new_keyboard;
+                    }
+                    Err(error) => eprintln!("Button {button}: could not switch profile: {error:#}"),
+                }
+                continue;
+            }
+            if binding.back {
+                let Some(target) = profile_history.last().cloned() else {
+                    continue;
+                };
+                let show_back_action = profile_history.len() > 1;
+                match switch_profile(&deck, &profile_path, &target, key_count, show_back_action) {
+                    Ok((new_profile_path, new_profile, new_status_state, new_keyboard)) => {
+                        profile_history.pop();
+                        profile_path = new_profile_path;
+                        profile = new_profile;
+                        status_state = new_status_state;
+                        keyboard = new_keyboard;
+                    }
+                    Err(error) => {
+                        eprintln!("Button {button}: could not return to profile: {error:#}")
+                    }
+                }
+                continue;
+            }
+            if let Some(command) = &binding.command {
                 run_command(button, command);
             }
-            if let DeviceStateUpdate::ButtonDown(button) = update
-                && let Some(binding) = profile
-                    .buttons
-                    .iter()
-                    .find(|binding| binding.index == button)
-                && let Some(keys) = &binding.keys
+            if let Some(keys) = &binding.keys
                 && let Some(keyboard) = &mut keyboard
                 && let Err(error) = send_keys(keyboard, keys)
             {
@@ -232,51 +271,84 @@ fn main() -> Result<()> {
     }
 }
 
+fn switch_profile(
+    deck: &StreamDeck,
+    current_profile_path: &Path,
+    target: &Path,
+    key_count: u8,
+    show_back_actions: bool,
+) -> Result<(PathBuf, Profile, StatusState, Option<uinput::Device>)> {
+    let profile_path = resolve_profile_path(current_profile_path, target);
+    let profile = Profile::load(&profile_path)?;
+    validate_profile(&profile, key_count)?;
+    let keyboard = create_virtual_keyboard(&profile)?;
+    load_icons(deck, &profile, &profile_path, show_back_actions)?;
+    let status_state = StatusState::with_base_icons(&profile);
+
+    println!(
+        "Switched to {} button binding(s) from {}.",
+        profile.buttons.iter().flatten().count(),
+        profile_path.display()
+    );
+    Ok((profile_path, profile, status_state, keyboard))
+}
+
 fn validate_profile(profile: &Profile, key_count: u8) -> Result<()> {
-    let mut configured_buttons = BTreeSet::new();
-    for binding in &profile.buttons {
-        if binding.index >= key_count {
+    for (index, binding) in profile.buttons.iter().enumerate() {
+        let Some(binding) = binding else {
+            continue;
+        };
+        if index >= key_count as usize {
             bail!(
                 "profile configures button {}, but the connected Stream Deck has only {key_count} buttons",
-                binding.index
+                index
             );
-        }
-        if !configured_buttons.insert(binding.index) {
-            bail!("profile configures button {} more than once", binding.index);
         }
         match (&binding.command, &binding.keys) {
             (Some(_), Some(_)) => bail!(
                 "button {} configures both command and keys; choose exactly one action",
-                binding.index
+                index
             ),
-            (None, None) => bail!(
-                "button {} has no action; configure either command or keys",
-                binding.index
-            ),
+            (None, None)
+                if binding.profile.is_none() && !binding.back && binding.status.is_none() =>
+            {
+                bail!(
+                    "button {} has no action or status; configure command, keys, profile, or status",
+                    index
+                )
+            }
             _ => {}
+        }
+        if binding.profile.is_some() && (binding.command.is_some() || binding.keys.is_some()) {
+            bail!(
+                "button {} configures profile switching alongside command or keys; choose exactly one action",
+                index
+            );
+        }
+        if binding.back
+            && (binding.profile.is_some() || binding.command.is_some() || binding.keys.is_some())
+        {
+            bail!(
+                "button {} configures back navigation alongside another action; choose exactly one action",
+                index
+            );
         }
         if let Some(keys) = &binding.keys
             && keys.0.is_empty()
         {
-            bail!("button {} has an empty keys action", binding.index);
+            bail!("button {} has an empty keys action", index);
         }
         if let Some(status) = &binding.status {
             if status.poll_seconds == 0 {
-                bail!(
-                    "button {} has a status poll interval of zero",
-                    binding.index
-                );
+                bail!("button {} has a status poll interval of zero", index);
             }
             if status.icons.is_empty() {
-                bail!(
-                    "button {} has no icons configured for its status",
-                    binding.index
-                );
+                bail!("button {} has no icons configured for its status", index);
             }
             if binding.icon.is_none() {
                 bail!(
                     "button {} has status icons but no base icon for status-query failures",
-                    binding.index
+                    index
                 );
             }
         }
@@ -285,7 +357,12 @@ fn validate_profile(profile: &Profile, key_count: u8) -> Result<()> {
 }
 
 fn create_virtual_keyboard(profile: &Profile) -> Result<Option<uinput::Device>> {
-    if !profile.buttons.iter().any(|button| button.keys.is_some()) {
+    if !profile
+        .buttons
+        .iter()
+        .flatten()
+        .any(|button| button.keys.is_some())
+    {
         return Ok(None);
     }
 
@@ -433,13 +510,17 @@ fn update_statuses(
     let now = Instant::now();
     let mut changed = false;
 
-    for binding in &profile.buttons {
+    for (index, binding) in profile.buttons.iter().enumerate() {
+        let Some(binding) = binding else {
+            continue;
+        };
+        let button = index as u8;
         let Some(status_config) = &binding.status else {
             continue;
         };
         if state
             .next_polls
-            .get(&binding.index)
+            .get(&button)
             .is_some_and(|next| *next > now)
         {
             continue;
@@ -448,42 +529,38 @@ fn update_statuses(
         // Schedule from the completion time. Otherwise a slow or timed-out command
         // becomes due again immediately and can starve button-event processing.
         state.next_polls.insert(
-            binding.index,
+            button,
             Instant::now() + Duration::from_secs(status_config.poll_seconds),
         );
 
         let status = match status_result {
             Ok(status) => status,
             Err(error) => {
-                eprintln!("Button {}: status query failed: {error:#}", binding.index);
-                changed |= restore_base_icon(deck, binding, profile_path, state);
+                eprintln!("Button {button}: status query failed: {error:#}");
+                changed |= restore_base_icon(deck, button, binding, profile_path, state);
                 continue;
             }
         };
         let Some(icon) = status_config.icons.icon_for(&status) else {
             eprintln!(
                 "Button {}: status {:?} has no configured icon",
-                binding.index, status
+                button, status
             );
-            changed |= restore_base_icon(deck, binding, profile_path, state);
+            changed |= restore_base_icon(deck, button, binding, profile_path, state);
             continue;
         };
-        if state.displayed_icons.get(&binding.index) == Some(&DisplayedIcon::Status(status.clone()))
-        {
+        if state.displayed_icons.get(&button) == Some(&DisplayedIcon::Status(status.clone())) {
             continue;
         }
 
-        if let Err(error) = set_button_icon(deck, binding.index, icon, profile_path) {
-            eprintln!(
-                "Button {}: could not update status icon: {error:#}",
-                binding.index
-            );
+        if let Err(error) = set_button_icon(deck, button, icon, profile_path) {
+            eprintln!("Button {}: could not update status icon: {error:#}", button);
             continue;
         }
-        println!("Button {} status: {status}", binding.index);
+        println!("Button {button} status: {status}");
         state
             .displayed_icons
-            .insert(binding.index, DisplayedIcon::Status(status));
+            .insert(button, DisplayedIcon::Status(status));
         changed = true;
     }
 
@@ -494,28 +571,27 @@ fn update_statuses(
 
 fn restore_base_icon(
     deck: &StreamDeck,
+    button: u8,
     binding: &Button,
     profile_path: &Path,
     state: &mut StatusState,
 ) -> bool {
-    if state.displayed_icons.get(&binding.index) == Some(&DisplayedIcon::Base) {
+    if state.displayed_icons.get(&button) == Some(&DisplayedIcon::Base) {
         return false;
     }
 
     let Some(icon) = &binding.icon else {
         return false;
     };
-    if let Err(error) = set_button_icon(deck, binding.index, icon, profile_path) {
+    if let Err(error) = set_button_icon(deck, button, icon, profile_path) {
         eprintln!(
             "Button {}: could not restore base icon after status failure: {error:#}",
-            binding.index
+            button
         );
         return false;
     }
-    println!("Button {}: restored base icon", binding.index);
-    state
-        .displayed_icons
-        .insert(binding.index, DisplayedIcon::Base);
+    println!("Button {button}: restored base icon");
+    state.displayed_icons.insert(button, DisplayedIcon::Base);
     true
 }
 
@@ -553,23 +629,44 @@ fn query_status_with_timeout(command: &str, timeout: Duration) -> Result<String>
     }
 }
 
-fn load_icons(deck: &StreamDeck, profile: &Profile, profile_path: &Path) -> Result<()> {
+fn load_icons(
+    deck: &StreamDeck,
+    profile: &Profile,
+    profile_path: &Path,
+    show_back_actions: bool,
+) -> Result<()> {
     let mut icon_count = 0;
 
-    for binding in &profile.buttons {
+    deck.clear_all_button_images()
+        .context("could not clear existing button icons from Stream Deck")?;
+
+    for (index, binding) in profile.buttons.iter().enumerate() {
+        let Some(binding) = binding else {
+            continue;
+        };
+        if !should_load_button_icon(binding, show_back_actions) {
+            continue;
+        }
         let Some(icon) = &binding.icon else {
             continue;
         };
-        set_button_icon(deck, binding.index, icon, profile_path)?;
+        set_button_icon(deck, index as u8, icon, profile_path)?;
         icon_count += 1;
     }
 
+    deck.flush()
+        .context("could not send button icons to Stream Deck")?;
+
     if icon_count > 0 {
-        deck.flush()
-            .context("could not send button icons to Stream Deck")?;
         println!("Loaded {icon_count} button icon(s).");
+    } else {
+        println!("Cleared all button icons.");
     }
     Ok(())
+}
+
+fn should_load_button_icon(binding: &Button, show_back_actions: bool) -> bool {
+    !binding.back || show_back_actions
 }
 
 fn set_button_icon(deck: &StreamDeck, button: u8, icon: &Path, profile_path: &Path) -> Result<()> {
@@ -601,11 +698,11 @@ fn profile_path() -> Result<PathBuf> {
     let mut args = env::args_os();
     let executable = args.next().unwrap_or_default();
     let path = args.next().map(PathBuf::from).ok_or_else(|| {
-        anyhow::anyhow!("usage: {} <profile.toml>", Path::new(&executable).display())
+        anyhow::anyhow!("usage: {} <profile.yaml>", Path::new(&executable).display())
     })?;
 
     if args.next().is_some() {
-        bail!("usage: {} <profile.toml>", Path::new(&executable).display());
+        bail!("usage: {} <profile.yaml>", Path::new(&executable).display());
     }
     Ok(path)
 }
@@ -630,52 +727,50 @@ mod tests {
 
     use super::{
         Button, Key, KeySequence, Profile, Status, parse_key, query_status_with_timeout,
-        validate_profile,
+        should_load_button_icon, validate_profile,
     };
     use std::time::Duration;
 
     #[test]
     fn parses_button_commands() {
-        let profile: Profile = toml::from_str(
+        let profile: Profile = serde_yaml::from_str(
             r#"
-                [[buttons]]
-                index = 0
-                command = "notify-send 'Hello'"
-                icon = "icons/hello.png"
-
-                [[buttons]]
-                index = 14
-                command = "playerctl play-pause"
-                [buttons.status]
-                command = "playerctl status"
-                poll_seconds = 2
-                [buttons.status.icons]
-                Playing = "icons/playing.png"
-                Paused = "icons/paused.png"
-
-                [[buttons]]
-                index = 2
-                keys = ["CTRL", "ALT", "T"]
+                buttons:
+                  - command: "notify-send 'Hello'"
+                    icon: icons/hello.png
+                  -
+                  - command: playerctl play-pause
+                    status:
+                      command: playerctl status
+                      poll_seconds: 2
+                      icons:
+                        Playing: icons/playing.png
+                        Paused: icons/paused.png
+                  - keys: [CTRL, ALT, T]
             "#,
         )
         .unwrap();
 
-        assert_eq!(profile.buttons.len(), 3);
-        assert_eq!(profile.buttons[0].index, 0);
+        assert_eq!(profile.buttons.len(), 4);
         assert_eq!(
-            profile.buttons[0].command.as_deref(),
+            profile.buttons[0].as_ref().unwrap().command.as_deref(),
             Some("notify-send 'Hello'")
         );
         assert_eq!(
-            profile.buttons[0].icon,
+            profile.buttons[0].as_ref().unwrap().icon,
             Some(PathBuf::from("icons/hello.png"))
         );
-        assert_eq!(profile.buttons[1].index, 14);
+        assert!(profile.buttons[1].is_none());
         assert_eq!(
-            profile.buttons[1].command.as_deref(),
+            profile.buttons[2].as_ref().unwrap().command.as_deref(),
             Some("playerctl play-pause")
         );
-        let status = profile.buttons[1].status.as_ref().unwrap();
+        let status = profile.buttons[2]
+            .as_ref()
+            .unwrap()
+            .status
+            .as_ref()
+            .unwrap();
         assert_eq!(status.command, "playerctl status");
         assert_eq!(status.poll_seconds, 2);
         assert_eq!(
@@ -683,7 +778,13 @@ mod tests {
             Some(&PathBuf::from("icons/playing.png"))
         );
         assert_eq!(
-            profile.buttons[2].keys.as_ref().unwrap().0,
+            profile.buttons[3]
+                .as_ref()
+                .unwrap()
+                .keys
+                .as_ref()
+                .unwrap()
+                .0,
             vec![Key::LeftControl, Key::LeftAlt, Key::T,]
         );
     }
@@ -692,14 +793,14 @@ mod tests {
     fn resolves_relative_icons_from_profile_directory() {
         assert_eq!(
             super::resolve_profile_path(
-                Path::new("profiles/work.toml"),
+                Path::new("profiles/work.yaml"),
                 Path::new("icons/play.png")
             ),
             PathBuf::from("profiles/icons/play.png")
         );
         assert_eq!(
             super::resolve_profile_path(
-                Path::new("profiles/work.toml"),
+                Path::new("profiles/work.yaml"),
                 Path::new("/tmp/play.png")
             ),
             PathBuf::from("/tmp/play.png")
@@ -728,17 +829,14 @@ mod tests {
 
     #[test]
     fn status_buttons_require_a_base_icon() {
-        let profile: Profile = toml::from_str(
+        let profile: Profile = serde_yaml::from_str(
             r#"
-                [[buttons]]
-                index = 0
-                command = "playerctl play-pause"
-
-                [buttons.status]
-                command = "playerctl status"
-
-                [buttons.status.icons]
-                Playing = "icons/playing.png"
+                buttons:
+                  - command: playerctl play-pause
+                    status:
+                      command: playerctl status
+                      icons:
+                        Playing: icons/playing.png
             "#,
         )
         .unwrap();
@@ -752,15 +850,33 @@ mod tests {
     }
 
     #[test]
-    fn threshold_status_selects_the_highest_matching_threshold() {
-        let status: Status = toml::from_str(
+    fn status_buttons_can_omit_an_action() {
+        let profile: Profile = serde_yaml::from_str(
             r#"
-                command = "echo 0"
-                mode = "threshold"
+                buttons:
+                  - icon: icons/status-unavailable.png
+                    status:
+                      command: playerctl status
+                      icons:
+                        Playing: icons/playing.png
+            "#,
+        )
+        .unwrap();
 
-                [icons]
-                3000 = "icons/three-thousand.png"
-                5000 = "icons/five-thousand.png"
+        validate_profile(&profile, 15).unwrap();
+        assert!(profile.buttons[0].as_ref().unwrap().command.is_none());
+        assert!(profile.buttons[0].as_ref().unwrap().keys.is_none());
+    }
+
+    #[test]
+    fn threshold_status_selects_the_highest_matching_threshold() {
+        let status: Status = serde_yaml::from_str(
+            r#"
+                command: echo 0
+                mode: threshold
+                icons:
+                  "3000": icons/three-thousand.png
+                  "5000": icons/five-thousand.png
             "#,
         )
         .unwrap();
@@ -783,14 +899,13 @@ mod tests {
 
     #[test]
     fn threshold_status_supports_exact_overrides() {
-        let status: Status = toml::from_str(
+        let status: Status = serde_yaml::from_str(
             r#"
-                command = "echo 0"
-                mode = "threshold"
-
-                [icons]
-                MUTED = "icons/muted.png"
-                1000 = "icons/low.png"
+                command: echo 0
+                mode: threshold
+                icons:
+                  MUTED: icons/muted.png
+                  "1000": icons/low.png
             "#,
         )
         .unwrap();
@@ -807,13 +922,14 @@ mod tests {
     #[test]
     fn rejects_a_button_with_both_action_types() {
         let profile = Profile {
-            buttons: vec![Button {
-                index: 0,
+            buttons: vec![Some(Button {
                 command: Some("echo command".to_owned()),
                 keys: Some(KeySequence(vec![Key::LeftControl, Key::C])),
+                profile: None,
+                back: false,
                 icon: None,
                 status: None,
-            }],
+            })],
         };
 
         assert!(
@@ -822,6 +938,40 @@ mod tests {
                 .to_string()
                 .contains("both command and keys")
         );
+    }
+
+    #[test]
+    fn accepts_profile_switching_actions() {
+        let profile: Profile = serde_yaml::from_str(
+            r#"
+                buttons:
+                  - profile: function-keys-profile.yaml
+            "#,
+        )
+        .unwrap();
+
+        validate_profile(&profile, 15).unwrap();
+        assert_eq!(
+            profile.buttons[0].as_ref().unwrap().profile.as_deref(),
+            Some(Path::new("function-keys-profile.yaml"))
+        );
+    }
+
+    #[test]
+    fn back_actions_are_hidden_without_a_calling_profile() {
+        let profile: Profile = serde_yaml::from_str(
+            r#"
+                buttons:
+                  - back: true
+                    icon: icons/switch-back.png
+            "#,
+        )
+        .unwrap();
+        let button = profile.buttons[0].as_ref().unwrap();
+
+        validate_profile(&profile, 15).unwrap();
+        assert!(!should_load_button_icon(button, false));
+        assert!(should_load_button_icon(button, true));
     }
 
     #[test]
@@ -853,11 +1003,10 @@ mod tests {
 
     #[test]
     fn rejects_unknown_keys_while_loading_the_profile() {
-        let error = toml::from_str::<Profile>(
+        let error = serde_yaml::from_str::<Profile>(
             r#"
-                [[buttons]]
-                index = 0
-                keys = ["NOT_A_KEY"]
+                buttons:
+                  - keys: [NOT_A_KEY]
             "#,
         )
         .unwrap_err();

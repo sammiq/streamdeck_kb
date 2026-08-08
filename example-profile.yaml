@@ -1,0 +1,167 @@
+# Button numbers are zero-based and follow list order.
+# Each command is run with /bin/sh -c when its button is pressed.
+buttons:
+  - command: playerctl play-pause
+    # Used whenever the status command has no usable output.
+    icon: icons/play-pause.png
+    status:
+      command: playerctl status
+      poll_seconds: 1
+      icons:
+        Playing: icons/playing.png
+        Paused: icons/paused.png
+
+  - keys: [CTRL, ALT, T]
+    icon: icons/terminal.png
+
+  # Display-only status buttons are no-ops when pressed.
+  - icon: icons/brightness-0000.png
+    status:
+      command: qdbus-qt6 org.kde.Solid.PowerManagement /org/kde/Solid/PowerManagement/Actions/BrightnessControl brightness
+      mode: threshold
+      poll_seconds: 1
+      icons:
+        "1000": icons/brightness-1000.png
+        "2000": icons/brightness-2000.png
+        "3000": icons/brightness-3000.png
+        "4000": icons/brightness-4000.png
+        "5000": icons/brightness-5000.png
+        "6000": icons/brightness-6000.png
+        "7000": icons/brightness-7000.png
+        "8000": icons/brightness-8000.png
+        "9000": icons/brightness-9000.png
+        "10000": icons/brightness-10000.png
+
+  # Toggle mute on the default output volume when pressed.
+  - command: wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle
+    icon: icons/volume-0000.png
+    status:
+      command: >-
+        wpctl get-volume @DEFAULT_AUDIO_SINK@ | awk '/\[MUTED\]/{ print "MUTED"; next } { printf "%.0f\n", $2 * 10000 }'
+      mode: threshold
+      poll_seconds: 1
+      icons:
+        MUTED: icons/volume-muted.png
+        "1000": icons/volume-1000.png
+        "2000": icons/volume-2000.png
+        "3000": icons/volume-3000.png
+        "4000": icons/volume-4000.png
+        "5000": icons/volume-5000.png
+        "6000": icons/volume-6000.png
+        "7000": icons/volume-7000.png
+        "8000": icons/volume-8000.png
+        "9000": icons/volume-9000.png
+        "10000": icons/volume-10000.png
+
+  # Toggle the AC on and off when pressed.
+  - command: ha-command.sh climate.daikinap19971 climate/toggle
+    icon: icons/climate-off.png
+    status:
+      # jq emits JSON strings, including the surrounding quotes.
+      command: "ha-query.sh climate.daikinap19971 | jq '.state'"
+      poll_seconds: 5
+      icons:
+        '"heat"': icons/climate-heat.png
+        '"cool"': icons/climate-cool.png
+        '"off"': icons/climate-off.png
+
+  - icon: icons/solar-over-1kw.png
+    status:
+      # Home Assistant reports a floating-point kilowatt value.
+      command: "ha-query.sh 'sensor.envoy_122328060082_current_power_production' | jq '.state | tonumber | floor'"
+      mode: threshold
+      poll_seconds: 5
+      icons:
+        "0": icons/solar-over-0kw.png
+        "1": icons/solar-over-1kw.png
+        "2": icons/solar-over-2kw.png
+        "3": icons/solar-over-3kw.png
+        "4": icons/solar-over-4kw.png
+        "5": icons/solar-over-5kw.png
+        "6": icons/solar-over-6kw.png
+        "7": icons/solar-over-7kw.png
+        "8": icons/solar-over-8kw.png
+        "9": icons/solar-over-9kw.png
+        "10": icons/solar-over-10kw.png
+
+  - icon: icons/grid-export-over-0kw.png
+    status:
+      command: "ha-query.sh 'sensor.current_grid_export' | jq '.state | tonumber | floor'"
+      mode: threshold
+      poll_seconds: 5
+      icons:
+        "0": icons/grid-export-over-0kw.png
+        "1": icons/grid-export-over-1kw.png
+        "2": icons/grid-export-over-2kw.png
+        "3": icons/grid-export-over-3kw.png
+        "4": icons/grid-export-over-4kw.png
+        "5": icons/grid-export-over-5kw.png
+        "6": icons/grid-export-over-6kw.png
+        "7": icons/grid-export-over-7kw.png
+        "8": icons/grid-export-over-8kw.png
+        "9": icons/grid-export-over-9kw.png
+        "10": icons/grid-export-over-10kw.png
+
+  - icon: icons/grid-import-over-0kw.png
+    status:
+      command: "ha-query.sh 'sensor.current_grid_import' | jq '.state | tonumber | floor'"
+      mode: threshold
+      poll_seconds: 5
+      icons:
+        "0": icons/grid-import-over-0kw.png
+        "1": icons/grid-import-over-1kw.png
+        "2": icons/grid-import-over-2kw.png
+        "3": icons/grid-import-over-3kw.png
+        "4": icons/grid-import-over-4kw.png
+        "5": icons/grid-import-over-5kw.png
+        "6": icons/grid-import-over-6kw.png
+        "7": icons/grid-import-over-7kw.png
+        "8": icons/grid-import-over-8kw.png
+        "9": icons/grid-import-over-9kw.png
+        "10": icons/grid-import-over-10kw.png
+
+  - icon: icons/ev-charging-over-0kw.png
+    status:
+      # The charger reports watts; convert to whole kilowatts.
+      command: "ha-query.sh 'sensor.myenergi_epping_power_charging' | jq '.state | tonumber / 1000 | floor'"
+      mode: threshold
+      poll_seconds: 5
+      icons:
+        "0": icons/ev-charging-over-0kw.png
+        "1": icons/ev-charging-over-1kw.png
+        "2": icons/ev-charging-over-2kw.png
+        "3": icons/ev-charging-over-3kw.png
+        "4": icons/ev-charging-over-4kw.png
+        "5": icons/ev-charging-over-5kw.png
+        "6": icons/ev-charging-over-6kw.png
+        "7": icons/ev-charging-over-7kw.png
+        "8": icons/ev-charging-over-8kw.png
+        "9": icons/ev-charging-over-9kw.png
+        "10": icons/ev-charging-over-10kw.png
+
+  - icon: icons/ev-charge-level-0pct.png
+    status:
+      # Polestar reports its state of charge as a percentage.
+      command: "ha-query.sh 'sensor.polestar_2943_battery_charge_level_2' | jq '.state | tonumber | floor'"
+      mode: threshold
+      poll_seconds: 5
+      icons:
+        "0": icons/ev-charge-level-0pct.png
+        "10": icons/ev-charge-level-10pct.png
+        "20": icons/ev-charge-level-20pct.png
+        "30": icons/ev-charge-level-30pct.png
+        "40": icons/ev-charge-level-40pct.png
+        "50": icons/ev-charge-level-50pct.png
+        "60": icons/ev-charge-level-60pct.png
+        "70": icons/ev-charge-level-70pct.png
+        "80": icons/ev-charge-level-80pct.png
+        "90": icons/ev-charge-level-90pct.png
+        "100": icons/ev-charge-level-100pct.png
+
+  # Leave buttons 10–13 empty so the profile switcher is physical button 14.
+  - null
+  - null
+  - null
+  - null
+  - profile: function-keys-profile.yaml
+    icon: icons/switch-to-function-keys.png

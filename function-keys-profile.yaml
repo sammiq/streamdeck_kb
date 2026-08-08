@@ -1,0 +1,32 @@
+# Buttons 0–11 send F13 through F24 in order.
+buttons:
+  - keys: [F13]
+    icon: icons/function-keys/f13.png
+  - keys: [F14]
+    icon: icons/function-keys/f14.png
+  - keys: [F15]
+    icon: icons/function-keys/f15.png
+  - keys: [F16]
+    icon: icons/function-keys/f16.png
+  - keys: [F17]
+    icon: icons/function-keys/f17.png
+  - keys: [F18]
+    icon: icons/function-keys/f18.png
+  - keys: [F19]
+    icon: icons/function-keys/f19.png
+  - keys: [F20]
+    icon: icons/function-keys/f20.png
+  - keys: [F21]
+    icon: icons/function-keys/f21.png
+  - keys: [F22]
+    icon: icons/function-keys/f22.png
+  - keys: [F23]
+    icon: icons/function-keys/f23.png
+  - keys: [F24]
+    icon: icons/function-keys/f24.png
+
+  # Return to the calling profile from physical button 14.
+  - null
+  - null
+  - back: true
+    icon: icons/switch-back.png

@@ -8,5 +8,5 @@ anyhow = "1.0.104"
 elgato-streamdeck = { version = "0.13.1", features = ["strum"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 serde = { version = "1", features = ["derive"] }
-toml = "0.8"
+serde_yaml = "0.9"
 uinput = "0.1"
