@@ -2,8 +2,9 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     env, fs,
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
     sync::Arc,
+    thread,
     time::{Duration, Instant},
 };
 
@@ -135,6 +136,8 @@ impl<'de> Deserialize<'de> for Status {
 fn default_poll_seconds() -> u64 {
     1
 }
+
+const STATUS_COMMAND_TIMEOUT: Duration = Duration::from_secs(1);
 
 #[derive(Default)]
 struct StatusState {
@@ -441,12 +444,15 @@ fn update_statuses(
         {
             continue;
         }
+        let status_result = query_status(&status_config.command);
+        // Schedule from the completion time. Otherwise a slow or timed-out command
+        // becomes due again immediately and can starve button-event processing.
         state.next_polls.insert(
             binding.index,
-            now + Duration::from_secs(status_config.poll_seconds),
+            Instant::now() + Duration::from_secs(status_config.poll_seconds),
         );
 
-        let status = match query_status(&status_config.command) {
+        let status = match status_result {
             Ok(status) => status,
             Err(error) => {
                 eprintln!("Button {}: status query failed: {error:#}", binding.index);
@@ -514,15 +520,37 @@ fn restore_base_icon(
 }
 
 fn query_status(command: &str) -> Result<String> {
-    let output = Command::new("/bin/sh")
+    query_status_with_timeout(command, STATUS_COMMAND_TIMEOUT)
+}
+
+fn query_status_with_timeout(command: &str, timeout: Duration) -> Result<String> {
+    let mut child = Command::new("/bin/sh")
         .arg("-c")
         .arg(command)
-        .output()
+        .stdout(Stdio::piped())
+        .spawn()
         .with_context(|| format!("could not start {command:?}"))?;
-    if !output.status.success() {
-        bail!("{command:?} exited with {}", output.status);
+    let deadline = Instant::now() + timeout;
+
+    loop {
+        if child.try_wait()?.is_some() {
+            let output = child.wait_with_output()?;
+            if !output.status.success() {
+                bail!("{command:?} exited with {}", output.status);
+            }
+            return Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned());
+        }
+
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            bail!(
+                "{command:?} did not finish within {} seconds",
+                timeout.as_secs_f32()
+            );
+        }
+        thread::sleep(Duration::from_millis(25));
     }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
 
 fn load_icons(deck: &StreamDeck, profile: &Profile, profile_path: &Path) -> Result<()> {
@@ -584,7 +612,14 @@ fn profile_path() -> Result<PathBuf> {
 
 fn run_command(button: u8, command: &str) {
     println!("Button {button}: {command}");
-    if let Err(error) = Command::new("/bin/sh").arg("-c").arg(command).spawn() {
+    if let Err(error) = Command::new("/bin/sh")
+        .arg("-c")
+        .arg(command)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    {
         eprintln!("Button {button}: could not start command: {error}");
     }
 }
@@ -593,7 +628,11 @@ fn run_command(button: u8, command: &str) {
 mod tests {
     use std::path::{Path, PathBuf};
 
-    use super::{Button, Key, KeySequence, Profile, Status, parse_key, validate_profile};
+    use super::{
+        Button, Key, KeySequence, Profile, Status, parse_key, query_status_with_timeout,
+        validate_profile,
+    };
+    use std::time::Duration;
 
     #[test]
     fn parses_button_commands() {
@@ -673,6 +712,13 @@ mod tests {
             super::query_status("printf 'Playing\\n'").unwrap(),
             "Playing"
         );
+    }
+
+    #[test]
+    fn status_queries_time_out() {
+        let error = query_status_with_timeout("sleep 1", Duration::from_millis(10))
+            .expect_err("a slow status command should time out");
+        assert!(error.to_string().contains("did not finish"));
     }
 
     #[test]

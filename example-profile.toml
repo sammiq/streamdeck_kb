@@ -91,8 +91,8 @@ poll_seconds = 5
 
 [[buttons]]
 index = 6
-# Show the Envoy's current solar-production reading when pressed.
-command = "ha-query.sh 'sensor.envoy_122328060082_current_power_production' | jq '.state'"
+# A no-op action; this button exists to show the solar production.
+command = "true"
 icon = "icons/solar-over-1kw.png"
 
 [buttons.status]
@@ -117,8 +117,8 @@ poll_seconds = 5
 
 [[buttons]]
 index = 7
-# Show the current power being exported to the grid when pressed.
-command = "ha-query.sh 'sensor.current_grid_export' | jq '.state'"
+# A no-op action; this button exists to show the solar export.
+command = "true"
 icon = "icons/grid-export-over-0kw.png"
 
 [buttons.status]
@@ -142,8 +142,8 @@ poll_seconds = 5
 
 [[buttons]]
 index = 8
-# Show the current power being imported from the grid when pressed.
-command = "ha-query.sh 'sensor.current_grid_import' | jq '.state'"
+# A no-op action; this button exists to show the power import.
+command = "true"
 icon = "icons/grid-import-over-0kw.png"
 
 [buttons.status]
@@ -167,13 +167,13 @@ poll_seconds = 5
 
 [[buttons]]
 index = 9
-# Show the current EV-charger power when pressed.
-command = "ha-query.sh 'sensor.myenergi_epping_power_charging' | jq '.state'"
+# A no-op action; this button exists to show the ev charging.
+command = "true"
 icon = "icons/ev-charging-over-0kw.png"
 
 [buttons.status]
-# Truncate the floating-point kilowatt reading for threshold matching.
-command = "ha-query.sh 'sensor.myenergi_epping_power_charging' | jq '.state | tonumber | floor'"
+# The charger reports watts; convert to a whole number of kilowatts.
+command = "ha-query.sh 'sensor.myenergi_epping_power_charging' | jq '.state | tonumber / 1000 | floor'"
 mode = "threshold"
 poll_seconds = 5
 
