@@ -8,7 +8,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, bail, ensure};
 use elgato_streamdeck::{DeviceStateUpdate, StreamDeck, list_devices, new_hidapi};
 use serde::Deserialize;
 use uinput::event::keyboard::Key;
@@ -147,6 +147,18 @@ struct StatusState {
     displayed_icons: BTreeMap<u8, DisplayedIcon>,
 }
 
+struct ActiveProfile {
+    profile_path: PathBuf,
+    profile: Profile,
+    status_state: StatusState,
+    keyboard: Option<uinput::Device>,
+}
+
+struct ProfileStack {
+    active: ActiveProfile,
+    history: Vec<PathBuf>,
+}
+
 #[derive(Debug, PartialEq, Eq)]
 enum DisplayedIcon {
     Base,
@@ -181,9 +193,41 @@ impl Profile {
     }
 }
 
+impl ProfileStack {
+    fn new(active: ActiveProfile) -> Self {
+        Self {
+            active,
+            history: Vec::new(),
+        }
+    }
+
+    fn push(&mut self, deck: &StreamDeck, target: &Path, key_count: u8) -> Result<()> {
+        let next = switch_profile(deck, &self.active.profile_path, target, key_count, true)?;
+        self.history.push(self.active.profile_path.clone());
+        self.active = next;
+        Ok(())
+    }
+
+    fn pop(&mut self, deck: &StreamDeck, key_count: u8) -> Result<bool> {
+        let Some(target) = self.history.last().cloned() else {
+            return Ok(false);
+        };
+        let next = switch_profile(
+            deck,
+            &self.active.profile_path,
+            &target,
+            key_count,
+            self.history.len() > 1,
+        )?;
+        self.history.pop();
+        self.active = next;
+        Ok(true)
+    }
+}
+
 fn main() -> Result<()> {
-    let mut profile_path = profile_path()?;
-    let mut profile = Profile::load(&profile_path)?;
+    let profile_path = profile_path()?;
+    let profile = Profile::load(&profile_path)?;
 
     let hid = new_hidapi()?;
     let devices = list_devices(&hid);
@@ -207,18 +251,28 @@ fn main() -> Result<()> {
     );
     load_icons(&deck, &profile, &profile_path, false)?;
     let reader = deck.get_reader();
-    let mut status_state = StatusState::with_base_icons(&profile);
-    let mut keyboard = create_virtual_keyboard(&profile)?;
-    let mut profile_history = Vec::new();
+    let mut profiles = ProfileStack::new(ActiveProfile {
+        profile_path,
+        status_state: StatusState::with_base_icons(&profile),
+        keyboard: create_virtual_keyboard(&profile)?,
+        profile,
+    });
 
     loop {
-        update_statuses(&deck, &profile, &profile_path, &mut status_state);
+        update_statuses(
+            &deck,
+            &profiles.active.profile,
+            &profiles.active.profile_path,
+            &mut profiles.active.status_state,
+        );
 
         for update in reader.read(Some(Duration::from_millis(100)))? {
             let DeviceStateUpdate::ButtonDown(button) = update else {
                 continue;
             };
-            let Some(binding) = profile
+            let Some(binding) = profiles
+                .active
+                .profile
                 .buttons
                 .get(button as usize)
                 .and_then(Option::as_ref)
@@ -226,32 +280,18 @@ fn main() -> Result<()> {
                 continue;
             };
 
-            if let Some(target) = &binding.profile {
-                match switch_profile(&deck, &profile_path, target, key_count, true) {
-                    Ok((new_profile_path, new_profile, new_status_state, new_keyboard)) => {
-                        profile_history.push(profile_path.clone());
-                        profile_path = new_profile_path;
-                        profile = new_profile;
-                        status_state = new_status_state;
-                        keyboard = new_keyboard;
-                    }
+            let target = binding.profile.clone();
+            let back = binding.back;
+            if let Some(target) = target {
+                match profiles.push(&deck, &target, key_count) {
+                    Ok(()) => {}
                     Err(error) => eprintln!("Button {button}: could not switch profile: {error:#}"),
                 }
                 continue;
             }
-            if binding.back {
-                let Some(target) = profile_history.last().cloned() else {
-                    continue;
-                };
-                let show_back_action = profile_history.len() > 1;
-                match switch_profile(&deck, &profile_path, &target, key_count, show_back_action) {
-                    Ok((new_profile_path, new_profile, new_status_state, new_keyboard)) => {
-                        profile_history.pop();
-                        profile_path = new_profile_path;
-                        profile = new_profile;
-                        status_state = new_status_state;
-                        keyboard = new_keyboard;
-                    }
+            if back {
+                match profiles.pop(&deck, key_count) {
+                    Ok(_) => {}
                     Err(error) => {
                         eprintln!("Button {button}: could not return to profile: {error:#}")
                     }
@@ -262,7 +302,7 @@ fn main() -> Result<()> {
                 run_command(button, command);
             }
             if let Some(keys) = &binding.keys
-                && let Some(keyboard) = &mut keyboard
+                && let Some(keyboard) = &mut profiles.active.keyboard
                 && let Err(error) = send_keys(keyboard, keys)
             {
                 eprintln!("Button {button}: could not send keys: {error:#}");
@@ -277,7 +317,7 @@ fn switch_profile(
     target: &Path,
     key_count: u8,
     show_back_actions: bool,
-) -> Result<(PathBuf, Profile, StatusState, Option<uinput::Device>)> {
+) -> Result<ActiveProfile> {
     let profile_path = resolve_profile_path(current_profile_path, target);
     let profile = Profile::load(&profile_path)?;
     validate_profile(&profile, key_count)?;
@@ -290,7 +330,12 @@ fn switch_profile(
         profile.buttons.iter().flatten().count(),
         profile_path.display()
     );
-    Ok((profile_path, profile, status_state, keyboard))
+    Ok(ActiveProfile {
+        profile_path,
+        profile,
+        status_state,
+        keyboard,
+    })
 }
 
 fn validate_profile(profile: &Profile, key_count: u8) -> Result<()> {
@@ -298,12 +343,11 @@ fn validate_profile(profile: &Profile, key_count: u8) -> Result<()> {
         let Some(binding) = binding else {
             continue;
         };
-        if index >= key_count as usize {
-            bail!(
-                "profile configures button {}, but the connected Stream Deck has only {key_count} buttons",
-                index
-            );
-        }
+        ensure!(
+            index < key_count as usize,
+            "profile configures button {}, but the connected Stream Deck has only {key_count} buttons",
+            index
+        );
         match (&binding.command, &binding.keys) {
             (Some(_), Some(_)) => bail!(
                 "button {} configures both command and keys; choose exactly one action",
@@ -319,38 +363,42 @@ fn validate_profile(profile: &Profile, key_count: u8) -> Result<()> {
             }
             _ => {}
         }
-        if binding.profile.is_some() && (binding.command.is_some() || binding.keys.is_some()) {
-            bail!(
-                "button {} configures profile switching alongside command or keys; choose exactly one action",
+        ensure!(
+            binding.profile.is_none() || (binding.command.is_none() && binding.keys.is_none()),
+            "button {} configures profile switching alongside command or keys; choose exactly one action",
+            index
+        );
+        ensure!(
+            !binding.back
+                || (binding.profile.is_none()
+                    && binding.command.is_none()
+                    && binding.keys.is_none()),
+            "button {} configures back navigation alongside another action; choose exactly one action",
+            index
+        );
+        if let Some(keys) = &binding.keys {
+            ensure!(
+                !keys.0.is_empty(),
+                "button {} has an empty keys action",
                 index
             );
-        }
-        if binding.back
-            && (binding.profile.is_some() || binding.command.is_some() || binding.keys.is_some())
-        {
-            bail!(
-                "button {} configures back navigation alongside another action; choose exactly one action",
-                index
-            );
-        }
-        if let Some(keys) = &binding.keys
-            && keys.0.is_empty()
-        {
-            bail!("button {} has an empty keys action", index);
         }
         if let Some(status) = &binding.status {
-            if status.poll_seconds == 0 {
-                bail!("button {} has a status poll interval of zero", index);
-            }
-            if status.icons.is_empty() {
-                bail!("button {} has no icons configured for its status", index);
-            }
-            if binding.icon.is_none() {
-                bail!(
-                    "button {} has status icons but no base icon for status-query failures",
-                    index
-                );
-            }
+            ensure!(
+                status.poll_seconds > 0,
+                "button {} has a status poll interval of zero",
+                index
+            );
+            ensure!(
+                !status.icons.is_empty(),
+                "button {} has no icons configured for its status",
+                index
+            );
+            ensure!(
+                binding.icon.is_some(),
+                "button {} has status icons but no base icon for status-query failures",
+                index
+            );
         }
     }
     Ok(())
@@ -611,9 +659,11 @@ fn query_status_with_timeout(command: &str, timeout: Duration) -> Result<String>
     loop {
         if child.try_wait()?.is_some() {
             let output = child.wait_with_output()?;
-            if !output.status.success() {
-                bail!("{command:?} exited with {}", output.status);
-            }
+            ensure!(
+                output.status.success(),
+                "{command:?} exited with {}",
+                output.status
+            );
             return Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned());
         }
 
@@ -701,9 +751,11 @@ fn profile_path() -> Result<PathBuf> {
         anyhow::anyhow!("usage: {} <profile.yaml>", Path::new(&executable).display())
     })?;
 
-    if args.next().is_some() {
-        bail!("usage: {} <profile.yaml>", Path::new(&executable).display());
-    }
+    ensure!(
+        args.next().is_none(),
+        "usage: {} <profile.yaml>",
+        Path::new(&executable).display()
+    );
     Ok(path)
 }
 

@@ -65,7 +65,7 @@ buttons:
         '"cool"': icons/climate-cool.png
         '"off"': icons/climate-off.png
 
-  - icon: icons/solar-over-1kw.png
+  - icon: icons/solar-over-0kw.png
     status:
       # Home Assistant reports a floating-point kilowatt value.
       command: "ha-query.sh 'sensor.envoy_122328060082_current_power_production' | jq '.state | tonumber | floor'"
