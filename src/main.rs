@@ -1,9 +1,12 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     env, fs,
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -141,10 +144,37 @@ fn default_poll_seconds() -> u64 {
 
 const STATUS_COMMAND_TIMEOUT: Duration = Duration::from_secs(1);
 
+/// Set by `--verbose`; enables logging of every status icon transition.
+static VERBOSE: AtomicBool = AtomicBool::new(false);
+
+fn verbose() -> bool {
+    VERBOSE.load(Ordering::Relaxed)
+}
+
 #[derive(Default)]
 struct StatusState {
     next_polls: BTreeMap<u8, Instant>,
     displayed_icons: BTreeMap<u8, DisplayedIcon>,
+    /// Buttons whose status has failed since their last success. Only the first
+    /// failure is reported so a persistently broken status doesn't flood the log.
+    failing: BTreeSet<u8>,
+}
+
+impl StatusState {
+    fn report_failure(&mut self, button: u8, message: impl FnOnce() -> String) {
+        if self.failing.insert(button) {
+            eprintln!(
+                "Button {button}: {} (suppressing further errors until it recovers)",
+                message()
+            );
+        }
+    }
+
+    fn clear_failure(&mut self, button: u8) {
+        if self.failing.remove(&button) {
+            eprintln!("Button {button}: status recovered");
+        }
+    }
 }
 
 struct ActiveProfile {
@@ -178,8 +208,8 @@ impl StatusState {
             })
             .collect();
         Self {
-            next_polls: BTreeMap::new(),
             displayed_icons,
+            ..Self::default()
         }
     }
 }
@@ -584,28 +614,33 @@ fn update_statuses(
         let status = match status_result {
             Ok(status) => status,
             Err(error) => {
-                eprintln!("Button {button}: status query failed: {error:#}");
+                state.report_failure(button, || format!("status query failed: {error:#}"));
                 changed |= restore_base_icon(deck, button, binding, profile_path, state);
                 continue;
             }
         };
         let Some(icon) = status_config.icons.icon_for(&status) else {
-            eprintln!(
-                "Button {}: status {:?} has no configured icon",
-                button, status
-            );
+            state.report_failure(button, || {
+                format!("status {status:?} has no configured icon")
+            });
             changed |= restore_base_icon(deck, button, binding, profile_path, state);
             continue;
         };
         if state.displayed_icons.get(&button) == Some(&DisplayedIcon::Status(status.clone())) {
+            state.clear_failure(button);
             continue;
         }
 
         if let Err(error) = set_button_icon(deck, button, icon, profile_path) {
-            eprintln!("Button {}: could not update status icon: {error:#}", button);
+            state.report_failure(button, || {
+                format!("could not update status icon: {error:#}")
+            });
             continue;
         }
-        println!("Button {button} status: {status}");
+        state.clear_failure(button);
+        if verbose() {
+            println!("Button {button} status: {status}");
+        }
         state
             .displayed_icons
             .insert(button, DisplayedIcon::Status(status));
@@ -638,7 +673,9 @@ fn restore_base_icon(
         );
         return false;
     }
-    println!("Button {button}: restored base icon");
+    if verbose() {
+        println!("Button {button}: restored base icon");
+    }
     state.displayed_icons.insert(button, DisplayedIcon::Base);
     true
 }
@@ -744,19 +781,28 @@ fn resolve_profile_path(profile_path: &Path, asset_path: &Path) -> PathBuf {
     }
 }
 
+/// Parse `[-v|--verbose] <profile.yaml>`, recording the verbose flag globally.
 fn profile_path() -> Result<PathBuf> {
     let mut args = env::args_os();
     let executable = args.next().unwrap_or_default();
-    let path = args.next().map(PathBuf::from).ok_or_else(|| {
-        anyhow::anyhow!("usage: {} <profile.yaml>", Path::new(&executable).display())
-    })?;
+    let usage = || {
+        anyhow::anyhow!(
+            "usage: {} [-v|--verbose] <profile.yaml>",
+            Path::new(&executable).display()
+        )
+    };
 
-    ensure!(
-        args.next().is_none(),
-        "usage: {} <profile.yaml>",
-        Path::new(&executable).display()
-    );
-    Ok(path)
+    let mut path = None;
+    for arg in args {
+        if arg == "-v" || arg == "--verbose" {
+            VERBOSE.store(true, Ordering::Relaxed);
+        } else if path.is_none() {
+            path = Some(PathBuf::from(arg));
+        } else {
+            return Err(usage());
+        }
+    }
+    path.ok_or_else(usage)
 }
 
 fn run_command(button: u8, command: &str) {

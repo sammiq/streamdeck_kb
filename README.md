@@ -8,6 +8,9 @@ display PNG icons.
 cargo run -- example-profile.yaml
 ```
 
+Pass `-v` / `--verbose` to log every status icon change. Status errors are
+reported once per button until that button's status recovers.
+
 Profiles are YAML files. Button numbers are zero-based; configured commands run
 through `/bin/sh -c` and are started without waiting for completion:
 
